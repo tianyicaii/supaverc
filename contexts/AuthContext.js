@@ -81,16 +81,23 @@ export const AuthProvider = ({ children }) => {
 
   const signInWithGitHub = async () => {
     try {
+      // 动态确定回调 URL - 本地开发时使用 localhost
+      const baseUrl = typeof window !== 'undefined' 
+        ? window.location.origin 
+        : 'http://localhost:3001'
+      
+      console.log('使用回调 URL:', `${baseUrl}/auth/callback`)
+      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
           scopes: 'read:user user:email',
-          redirectTo: `${window.location.origin}/auth/callback`
+          redirectTo: `${baseUrl}/auth/callback`
         }
       })
       if (error) throw error
     } catch (error) {
-      console.error('Error signing in with GitHub:', error)
+      console.error('GitHub 登录错误:', error)
       throw error
     }
   }
