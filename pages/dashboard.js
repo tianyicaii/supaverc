@@ -1,38 +1,49 @@
-// pages/dashboard.js - 调试版本
+// pages/dashboard.js - 修复 SSR 错误
 import { useAuth } from '../contexts/AuthContext'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
+import { useEffect, useState } from 'react'
 
 export default function Dashboard() {
   const { user, signOut } = useAuth()
   const router = useRouter()
+  const [mounted, setMounted] = useState(false)
+
+  // 确保组件在客户端挂载后才使用 router
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // 在客户端挂载后才处理重定向
+  useEffect(() => {
+    if (mounted && !user) {
+      router.push('/login')
+    }
+  }, [mounted, user, router])
 
   const handleSignOut = async () => {
+    if (!mounted) return // 防止服务端执行
+    
     console.log('🔄 开始退出登录...')
     
     try {
-      // 使用 AuthContext 的 signOut
       console.log('📤 调用 AuthContext signOut...')
       await signOut()
       console.log('✅ AuthContext signOut 成功')
       
-      // 重定向
       console.log('🔄 执行重定向...')
       router.push('/login')
       
     } catch (error) {
       console.error('❌ 退出失败:', error)
       
-      // 备选方案：直接使用 Supabase
       try {
         console.log('🔄 尝试直接退出...')
         await supabase.auth.signOut()
         
-        // 清理本地存储
         localStorage.clear()
         sessionStorage.clear()
         
-        // 强制跳转
         window.location.href = '/login'
       } catch (err) {
         console.error('❌ 直接退出也失败:', err)
@@ -41,9 +52,32 @@ export default function Dashboard() {
     }
   }
 
+  // 服务端渲染时显示加载状态
+  if (!mounted) {
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+      }}>
+        <div>加载中...</div>
+      </div>
+    )
+  }
+
+  // 客户端渲染时检查用户
   if (!user) {
-    router.push('/login')
-    return null
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+      }}>
+        <div>正在验证用户...</div>
+      </div>
+    )
   }
 
   return (
@@ -91,10 +125,6 @@ export default function Dashboard() {
         >
           🔍 检查状态
         </button>
-      </div>
-
-      <div style={{ marginTop: '20px', fontSize: '14px', color: '#666' }}>
-        <p>💡 点击退出登录后，请按 F12 查看控制台日志</p>
       </div>
     </div>
   )

@@ -1,30 +1,52 @@
-// pages/index.js
-import { useEffect } from 'react'
+// pages/index.js - 修复 SSR 错误
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function Home() {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    if (!loading) {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (mounted && !loading) {
       if (user) {
-        // 用户已登录，重定向到仪表板
         router.push('/dashboard')
       } else {
-        // 用户未登录，重定向到登录页面
         router.push('/login')
       }
     }
-  }, [user, loading, router])
+  }, [mounted, user, loading, router])
 
-  // 显示加载状态
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">正在加载...</p>
+    <div style={{ 
+      minHeight: '100vh', 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center',
+      fontFamily: 'Arial, sans-serif'
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{
+          width: '40px',
+          height: '40px',
+          border: '4px solid #f3f3f3',
+          borderTop: '4px solid #3498db',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          margin: '0 auto 20px'
+        }}></div>
+        <p>正在加载...</p>
+        <style jsx>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
       </div>
     </div>
   )

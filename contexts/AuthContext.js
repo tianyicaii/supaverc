@@ -1,4 +1,4 @@
-// contexts/AuthContext.js - 修复版本
+// contexts/AuthContext.js - SSR 优化版本
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
@@ -15,9 +15,15 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    // 获取初始用户
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (!mounted) return
+
     const getInitialUser = async () => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
@@ -34,7 +40,6 @@ export const AuthProvider = ({ children }) => {
 
     getInitialUser()
 
-    // 监听认证状态变化
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         console.log('🔄 认证状态变化:', event, !!session)
@@ -44,9 +49,11 @@ export const AuthProvider = ({ children }) => {
     )
 
     return () => subscription.unsubscribe()
-  }, [])
+  }, [mounted])
 
   const signInWithGitHub = async () => {
+    if (!mounted) return
+
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
@@ -62,10 +69,11 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signOut = async () => {
+    if (!mounted) return
+
     console.log('🔄 AuthContext: 开始退出登录...')
     
     try {
-      // 调用 Supabase signOut
       const { error } = await supabase.auth.signOut()
       
       if (error) {
@@ -75,10 +83,8 @@ export const AuthProvider = ({ children }) => {
       
       console.log('✅ Supabase signOut 成功')
       
-      // 手动清理状态（防止状态更新延迟）
       setUser(null)
       
-      // 清理本地存储
       if (typeof window !== 'undefined') {
         localStorage.clear()
         sessionStorage.clear()
@@ -89,7 +95,6 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ AuthContext signOut 失败:', error)
       
-      // 即使 signOut 失败，也要清理本地状态
       setUser(null)
       if (typeof window !== 'undefined') {
         localStorage.clear()
@@ -107,7 +112,10 @@ export const AuthProvider = ({ children }) => {
     signOut
   }
 
-  console.log('🔍 AuthContext 当前状态:', { hasUser: !!user, loading })
+  // 服务端渲染时不输出调试信息
+  if (mounted) {
+    console.log('🔍 AuthContext 当前状态:', { hasUser: !!user, loading })
+  }
 
   return (
     <AuthContext.Provider value={value}>
