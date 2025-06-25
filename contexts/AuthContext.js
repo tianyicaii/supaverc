@@ -1,4 +1,4 @@
-// contexts/AuthContext.js - 添加自动用户创建
+// contexts/AuthContext.js - 改进会话处理
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
@@ -21,147 +21,93 @@ export const AuthProvider = ({ children }) => {
     setMounted(true)
   }, [])
 
-  // 创建或更新用户信息到数据库
-  const createOrUpdateUser = async (authUser) => {
-    if (!authUser) return
-
-    try {
-      console.log('🔄 开始创建/更新用户信息...')
-      
-      // 从 GitHub 用户元数据获取信息
-      const metadata = authUser.user_metadata || {}
-      
-      // 提取 GitHub ID
-      let githubId = null
-      if (metadata.provider_id) {
-        githubId = parseInt(metadata.provider_id)
-      } else if (metadata.sub) {
-        githubId = parseInt(metadata.sub)
-      } else if (metadata.user_name) {
-        // 如果没有直接的 ID，尝试从其他字段推断
-        console.warn('无法获取 GitHub ID，使用用户名哈希作为备选')
-        githubId = metadata.user_name.split('').reduce((a, b) => {
-          a = ((a << 5) - a) + b.charCodeAt(0)
-          return a & a
-        }, 0)
-      }
-
-      if (!githubId) {
-        console.error('无法获取 GitHub ID，跳过用户创建')
-        return
-      }
-
-      const userData = {
-        auth_user_id: authUser.id,
-        github_id: githubId,
-        username: metadata.user_name || metadata.preferred_username || metadata.name || 'unknown',
-        email: authUser.email,
-        avatar_url: metadata.avatar_url,
-        name: metadata.full_name || metadata.name,
-        bio: metadata.bio || null,
-        company: metadata.company || null,
-        location: metadata.location || null,
-        blog: metadata.blog || null,
-        twitter_username: metadata.twitter_username || null,
-        public_repos: metadata.public_repos || 0,
-        followers: metadata.followers || 0,
-        following: metadata.following || 0,
-        last_login: new Date().toISOString()
-      }
-
-      console.log('📝 用户数据:', userData)
-
-      // 尝试插入新用户或更新现有用户
-      const { data, error } = await supabase
-        .from('users')
-        .upsert(userData, { 
-          onConflict: 'github_id',
-          ignoreDuplicates: false 
-        })
-        .select()
-
-      if (error) {
-        console.error('❌ 创建/更新用户失败:', error)
-        
-        // 如果是权限问题，尝试使用 RPC 函数
-        if (error.code === '42501' || error.message.includes('permission')) {
-          console.log('🔄 尝试使用 RPC 函数创建用户...')
-          await createUserViaRPC(userData)
-        }
-      } else {
-        console.log('✅ 用户信息创建/更新成功:', data)
-      }
-
-    } catch (error) {
-      console.error('❌ 创建用户时发生异常:', error)
-    }
-  }
-
-  // 通过 RPC 函数创建用户（备选方案）
-  const createUserViaRPC = async (userData) => {
-    try {
-      const { data, error } = await supabase.rpc('create_or_update_user', userData)
-      
-      if (error) {
-        console.error('❌ RPC 创建用户失败:', error)
-      } else {
-        console.log('✅ RPC 创建用户成功:', data)
-      }
-    } catch (error) {
-      console.error('❌ RPC 调用异常:', error)
-    }
-  }
-
   useEffect(() => {
     if (!mounted) return
 
-    const getInitialUser = async () => {
+    let subscription = null
+
+    const initializeAuth = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        setUser(user)
+        // 尝试获取当前会话
+        const { data: { session }, error } = await supabase.auth.getSession()
         
-        // 如果用户已登录，确保用户信息在数据库中
-        if (user) {
-          await createOrUpdateUser(user)
+        if (error) {
+          console.error('获取会话失败:', error)
+          // 如果获取会话失败，清理状态
+          setUser(null)
+        } else if (session && session.user) {
+          console.log('找到现有会话:', session.user.email)
+          setUser(session.user)
+        } else {
+          console.log('没有现有会话')
+          setUser(null)
         }
-        
+
         setLoading(false)
+
+        // 监听认证状态变化
+        const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(
+          async (event, session) => {
+            console.log('认证状态变化:', event, session?.user?.email || 'no user')
+            
+            setUser(session?.user ?? null)
+            setLoading(false)
+
+            // 处理不同的认证事件
+            switch (event) {
+              case 'SIGNED_IN':
+                console.log('✅ 用户登录成功')
+                break
+              case 'SIGNED_OUT':
+                console.log('🚪 用户已退出')
+                break
+              case 'TOKEN_REFRESHED':
+                console.log('🔄 令牌已刷新')
+                break
+              case 'USER_UPDATED':
+                console.log('👤 用户信息已更新')
+                break
+            }
+          }
+        )
+
+        subscription = authSubscription
+
       } catch (error) {
-        console.error('获取用户失败:', error)
+        console.error('初始化认证失败:', error)
+        setUser(null)
         setLoading(false)
       }
     }
 
-    getInitialUser()
+    initializeAuth()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('🔄 认证事件:', event)
-        setUser(session?.user ?? null)
-        setLoading(false)
-
-        // 当用户登录时，创建或更新用户信息
-        if (event === 'SIGNED_IN' && session?.user) {
-          console.log('👤 用户登录，开始处理用户信息...')
-          await createOrUpdateUser(session.user)
-        }
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe()
       }
-    )
-
-    return () => subscription.unsubscribe()
+    }
   }, [mounted])
 
   const signInWithGitHub = async () => {
     if (!mounted || typeof window === 'undefined') return
 
     try {
+      console.log('开始 GitHub 登录...')
+      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: 'read:user user:email'
         }
       })
-      if (error) throw error
+      
+      if (error) {
+        console.error('GitHub OAuth 错误:', error)
+        throw error
+      }
+      
     } catch (error) {
       console.error('GitHub 登录失败:', error)
       throw error
@@ -172,8 +118,13 @@ export const AuthProvider = ({ children }) => {
     if (!mounted) return
 
     try {
+      console.log('开始退出登录...')
+      
       const { error } = await supabase.auth.signOut()
-      if (error) throw error
+      if (error) {
+        console.error('退出失败:', error)
+        throw error
+      }
       
       setUser(null)
       
@@ -181,15 +132,26 @@ export const AuthProvider = ({ children }) => {
         localStorage.clear()
         sessionStorage.clear()
       }
+      
+      console.log('✅ 退出成功')
+      
     } catch (error) {
-      console.error('退出失败:', error)
+      console.error('退出过程中发生错误:', error)
+      // 即使退出失败也要清理本地状态
       setUser(null)
       throw error
     }
   }
 
+  const value = {
+    user,
+    loading,
+    signInWithGitHub,
+    signOut
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, signInWithGitHub, signOut }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
