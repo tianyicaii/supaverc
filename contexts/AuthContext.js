@@ -1,3 +1,4 @@
+// contexts/AuthContext.js - 修复版本
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
@@ -16,98 +17,85 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 获取初始用户状态
+    // 获取初始用户
     const getInitialUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      setLoading(false)
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser()
+        if (error) {
+          console.error('获取初始用户失败:', error)
+        }
+        setUser(user)
+      } catch (error) {
+        console.error('获取用户异常:', error)
+      } finally {
+        setLoading(false)
+      }
     }
 
     getInitialUser()
 
     // 监听认证状态变化
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
+        console.log('🔄 认证状态变化:', event, !!session)
         setUser(session?.user ?? null)
         setLoading(false)
-
-        // 当用户登录时，创建或更新用户信息
-        if (event === 'SIGNED_IN' && session?.user) {
-          await createOrUpdateUser(session.user)
-        }
       }
     )
 
     return () => subscription.unsubscribe()
   }, [])
 
-  const createOrUpdateUser = async (authUser) => {
-    try {
-      // 从 GitHub 获取用户详细信息
-      const githubUser = authUser.user_metadata
-
-      const userData = {
-        github_id: parseInt(githubUser.sub) || parseInt(authUser.id.split('-')[0], 16),
-        username: githubUser.user_name || githubUser.preferred_username,
-        email: authUser.email,
-        avatar_url: githubUser.avatar_url,
-        name: githubUser.full_name || githubUser.name,
-        bio: githubUser.bio,
-        company: githubUser.company,
-        location: githubUser.location,
-        blog: githubUser.blog,
-        twitter_username: githubUser.twitter_username,
-        public_repos: githubUser.public_repos,
-        followers: githubUser.followers,
-        following: githubUser.following,
-        last_login: new Date().toISOString()
-      }
-
-      // 尝试插入或更新用户
-      const { error } = await supabase
-        .from('users')
-        .upsert(userData, { 
-          onConflict: 'github_id',
-          ignoreDuplicates: false 
-        })
-
-      if (error) {
-        console.error('Error creating/updating user:', error)
-      }
-    } catch (error) {
-      console.error('Error in createOrUpdateUser:', error)
-    }
-  }
-
   const signInWithGitHub = async () => {
     try {
-      // 动态确定回调 URL - 本地开发时使用 localhost
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
-        : 'http://localhost:3001'
-      
-      console.log('使用回调 URL:', `${baseUrl}/auth/callback`)
-      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-          scopes: 'read:user user:email',
-          redirectTo: `${baseUrl}/auth/callback`
+          redirectTo: `${window.location.origin}/auth/callback`
         }
       })
       if (error) throw error
     } catch (error) {
-      console.error('GitHub 登录错误:', error)
+      console.error('GitHub 登录失败:', error)
       throw error
     }
   }
 
   const signOut = async () => {
+    console.log('🔄 AuthContext: 开始退出登录...')
+    
     try {
+      // 调用 Supabase signOut
       const { error } = await supabase.auth.signOut()
-      if (error) throw error
+      
+      if (error) {
+        console.error('❌ Supabase signOut 错误:', error)
+        throw error
+      }
+      
+      console.log('✅ Supabase signOut 成功')
+      
+      // 手动清理状态（防止状态更新延迟）
+      setUser(null)
+      
+      // 清理本地存储
+      if (typeof window !== 'undefined') {
+        localStorage.clear()
+        sessionStorage.clear()
+      }
+      
+      console.log('✅ 本地状态清理完成')
+      
     } catch (error) {
-      console.error('Error signing out:', error)
+      console.error('❌ AuthContext signOut 失败:', error)
+      
+      // 即使 signOut 失败，也要清理本地状态
+      setUser(null)
+      if (typeof window !== 'undefined') {
+        localStorage.clear()
+        sessionStorage.clear()
+      }
+      
       throw error
     }
   }
@@ -118,6 +106,8 @@ export const AuthProvider = ({ children }) => {
     signInWithGitHub,
     signOut
   }
+
+  console.log('🔍 AuthContext 当前状态:', { hasUser: !!user, loading })
 
   return (
     <AuthContext.Provider value={value}>
