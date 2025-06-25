@@ -1,0 +1,2 @@
+# supaverc
+supabase + vercel
